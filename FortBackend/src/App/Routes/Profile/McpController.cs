@@ -8,7 +8,6 @@ using static FortBackend.src.App.Utilities.Helpers.Grabber;
 using FortBackend.src.App.Routes.Profile.McpControllers;
 using FortBackend.src.App.Utilities.Helpers.Middleware;
 using System.IdentityModel.Tokens.Jwt;
-using System.Linq;
 using FortLibrary.EpicResponses.Errors;
 using FortLibrary.EpicResponses.Profile;
 using FortLibrary.EpicResponses.Profile.Purchases;
@@ -22,10 +21,6 @@ namespace FortBackend.src.App.Routes.Profile
     [Route("fortnite/api/game/v2/profile")]
     public class QueryProfileApiController : ControllerBase
     {
-
-        // [HttpPost("{accountId}/{wildcard}/BulkEquipBattleRoyaleCustomization")]
-        // [HttpPost("{accountId}/{wildcard}/ClientQuestLogin")] // temp 
-        // [HttpPost("{accountId}/{wildcard}/QueryProfile")]
         [HttpPost("{accountId}/{wildcard}/{mcp}")]
         [AuthorizeToken]
         public async Task<ActionResult<Mcp>> McpApi(string accountId, string wildcard, string mcp)
@@ -33,202 +28,100 @@ namespace FortBackend.src.App.Routes.Profile
             Response.ContentType = "application/json";
             try
             {
-                var RVN = int.Parse(Request.Query["rvn"].FirstOrDefault() ?? "-1");
-                var ProfileID = Request.Query["profileId"].ToString() ?? "athena";
-
-                using (var reader = new StreamReader(Request.Body, Encoding.UTF8))
+                var rvn = int.TryParse(Request.Query["rvn"].FirstOrDefault(), out var parsedRvn) ? parsedRvn : -1;
+                var profileId = Request.Query["profileId"].ToString() ?? "athena";
+                
+                using var reader = new StreamReader(Request.Body, Encoding.UTF8);
+                var requestBody = await reader.ReadToEndAsync();
+                
+                if (string.IsNullOrEmpty(requestBody))
                 {
-                    var requestbody = await reader.ReadToEndAsync();
-                    Console.WriteLine(requestbody);
-                    Console.WriteLine(mcp);
-                    VersionClass Season = await SeasonUserAgent(Request);
-
-                    if (string.IsNullOrEmpty(requestbody))
-                    {
-                        throw new BaseError
-                        {
-                            errorCode = "errors.com.epicgames.common.iforgot",
-                            errorMessage = $"No Body for /api/game/v2/profile/{accountId}/{wildcard}/{mcp}",
-                            messageVars = new List<string> { $"/api/game/v2/profile/{accountId}/{wildcard}/{mcp}" },
-                            numericErrorCode = 1032,
-                            originatingService = "any",
-                            intent = "prod",
-                            error_description = $"No Body for /api/game/v2/profile/{accountId}/{wildcard}/{mcp}",
-                        };
-                    }
-                    var response = new Mcp();
-                    if (wildcard == "dedicated_server")
-                    {
-                        // we check from the cached data... it will no matter try to grab the data if the account id is valid
-                        ProfileCacheEntry profileCacheEntry = await GrabData.Profile(accountId);
-
-                        if (profileCacheEntry != null && !string.IsNullOrEmpty(profileCacheEntry.AccountId))
-                        {
-
-                            switch (mcp)
-                            {
-                                case "QueryProfile":
-                                    response = await QueryProfile.Init(accountId, ProfileID, Season, RVN, profileCacheEntry);
-                                    break;
-
-                                default:
-                                    Logger.Error("MISSING MCP REQUEST FOR DEDICATED SERVER -> " + mcp);
-                                    response = new Mcp
-                                    {
-                                        profileRevision = ProfileID == "common_core" || ProfileID == "common_public" ? profileCacheEntry.AccountData.commoncore.RVN : profileCacheEntry.AccountData.athena.RVN,
-                                        profileId = ProfileID,
-                                        profileChangesBaseRevision = ProfileID == "common_core" || ProfileID == "common_public" ? profileCacheEntry.AccountData.commoncore.RVN : profileCacheEntry.AccountData.athena.RVN,
-                                        profileCommandRevision = ProfileID == "common_core" || ProfileID == "common_public" ? profileCacheEntry.AccountData.commoncore.CommandRevision : profileCacheEntry.AccountData.athena.CommandRevision,
-                                        serverTime = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffZ"),
-                                        responseVersion = 1
-                                    };
-                                    break;
-                            }
-
-                            return response;
-                        }
-                        else
-                        {
-                            throw new BaseError
-                            {
-                                errorCode = "errors.com.epicgames.common.authentication.authentication_failed",
-                                errorMessage = $"Authentication failed for /api/game/v2/profile/{accountId}/{wildcard}/{mcp}",
-                                messageVars = new List<string> { $"/api/game/v2/profile/{accountId}/{wildcard}/{mcp}" },
-                                numericErrorCode = 1032,
-                                originatingService = "any",
-                                intent = "prod",
-                                error_description = $"Authentication failed for /api/game/v2/profile/{accountId}/{wildcard}/{mcp}",
-                            };
-                        }
-                    }
-                    else
-                    {
-                        var tokenPayload = HttpContext.Items["Payload"] as TokenPayload;
-
-                        if (string.IsNullOrEmpty(tokenPayload?.Sec))
-                        {
-                            throw new BaseError
-                            {
-                                errorCode = "errors.com.epicgames.common.authentication.authentication_failed",
-                                errorMessage = $"Authentication failed for /api/game/v2/profile/{accountId}/{wildcard}/{mcp}",
-                                messageVars = new List<string> { $"/api/game/v2/profile/{accountId}/{wildcard}/{mcp}" },
-                                numericErrorCode = 1032,
-                                originatingService = "any",
-                                intent = "prod",
-                                error_description = $"Authentication failed for /api/game/v2/profile/{accountId}/{wildcard}/{mcp}",
-                            };
-                        }
-
-                        var profileCacheEntry = HttpContext.Items["ProfileData"] as ProfileCacheEntry;
-
-                        if (profileCacheEntry != null && !string.IsNullOrEmpty(profileCacheEntry.AccountId) && profileCacheEntry.AccountId == accountId)
-                        {
-
-
-                            switch (mcp)
-                            {
-                                case "QueryProfile":
-                                   response = await QueryProfile.Init(accountId, ProfileID, Season, RVN, profileCacheEntry);
-                                break;
-                                case "ClientQuestLogin":
-                                    response = await ClientQuestLogin.Init(accountId, ProfileID, Season, RVN, profileCacheEntry);
-                                    break;
-                                case "SetCosmeticLockerSlot":
-                                    response = await SetCosmeticLockerSlot.Init(accountId, ProfileID, Season, RVN, profileCacheEntry, JsonConvert.DeserializeObject<SetCosmeticLockerSlotRequest>(requestbody)!);
-                                    break;
-                                case "MarkNewQuestNotificationSent":
-                                    response = await MarkNewQuestNotificationSent.Init(accountId, ProfileID, Season, RVN, profileCacheEntry, JsonConvert.DeserializeObject<MarkNewQuestNotificationSentRequest>(requestbody)!);
-                                    break;
-                                case "MarkItemSeen":
-                                    response = await MarkItemSeen.Init(accountId, ProfileID, Season, RVN, profileCacheEntry, JsonConvert.DeserializeObject<MarkNewQuestNotificationSentRequest>(requestbody)!);
-                                    break;
-                                case "EquipBattleRoyaleCustomization":
-                                    response = await EquipBattleRoyaleCustomization.Init(accountId, ProfileID, Season, RVN, profileCacheEntry, JsonConvert.DeserializeObject<EquipBattleRoyaleCustomizationRequest>(requestbody)!);
-                                    break;
-                                case "SetPartyAssistQuest":
-                                    response = await SetPartyAssistQuest.Init(accountId, ProfileID, Season, RVN, profileCacheEntry, JsonConvert.DeserializeObject<SetPartyAssistQuestResponse>(requestbody)!);
-                                    break;
-                                case "SetBattleRoyaleBanner":
-                                    response = await SetBattleRoyaleBanner.Init(accountId, ProfileID, Season, RVN, profileCacheEntry, JsonConvert.DeserializeObject<SetBattleRoyaleBannerReq>(requestbody)!);
-                                    break;
-                                case "PurchaseCatalogEntry":
-                                    response = await PurchaseCatalogEntry.Init(accountId, ProfileID, Season, RVN, profileCacheEntry, JsonConvert.DeserializeObject<PurchaseCatalogEntryRequest>(requestbody)!);
-                                    break;
-                                case "RemoveGiftBox":
-                                    response = await RemoveGiftBox.Init(accountId, ProfileID, Season, RVN, profileCacheEntry, JsonConvert.DeserializeObject<RemoveGiftBoxReq>(requestbody)!);
-                                    break;
-                                case "FortRerollDailyQuest":
-                                    response = await FortRerollDailyQuest.Init(accountId, ProfileID, Season, RVN, profileCacheEntry, JsonConvert.DeserializeObject<FortRerollDailyQuestReq>(requestbody)!);
-                                    break;
-                                case "UpdateQuestClientObjectives":
-                                    response = await UpdateQuestClientObjectives.Init(accountId, ProfileID, Season, RVN, profileCacheEntry, JsonConvert.DeserializeObject<UpdateQuestClientObjectivesReq>(requestbody)!);
-                                    break;
-                                case "BulkEquipBattleRoyaleCustomization":
-                                    response = await BulkEquipBattleRoyaleCustomization.Init(accountId, ProfileID, Season, RVN, profileCacheEntry, JsonConvert.DeserializeObject<BulkEquipBattleRoyaleCustomizationResponse>(requestbody)!);
-                                    break;
-                                // not proper
-                                //case "CopyCosmeticLoadout":
-                                //    response = await CopyCosmeticLoadout.Init(accountId, ProfileID, Season, RVN, profileCacheEntry, JsonConvert.DeserializeObject<CopyCosmeticLoadoutResponse>(requestbody));
-                                //    break;
-                                default:
-
-                                        response = new Mcp
-                                        {
-                                            profileRevision = ProfileID == "common_core" || ProfileID == "common_public" ? profileCacheEntry.AccountData.commoncore.RVN : profileCacheEntry.AccountData.athena.RVN,
-                                            profileId = ProfileID,
-                                            profileChangesBaseRevision = ProfileID == "common_core" || ProfileID == "common_public" ? profileCacheEntry.AccountData.commoncore.RVN : profileCacheEntry.AccountData.athena.RVN,
-                                            profileCommandRevision = ProfileID == "common_core" || ProfileID == "common_public" ? profileCacheEntry.AccountData.commoncore.CommandRevision : profileCacheEntry.AccountData.athena.CommandRevision,
-                                            serverTime = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffZ"),
-                                            responseVersion = 1
-                                        };
-                                        break;
-                            }
-                        }
-                        else
-                        {
-                            throw new BaseError
-                            {
-                                errorCode = "errors.com.epicgames.common.authentication.authentication_failed",
-                                errorMessage = $"Authentication failed for /api/game/v2/profile/{accountId}/{wildcard}/{mcp}",
-                                messageVars = new List<string> { $"/api/game/v2/profile/{accountId}/{wildcard}/{mcp}" },
-                                numericErrorCode = 1032,
-                                originatingService = "any",
-                                intent = "prod",
-                                error_description = $"Authentication failed for /api/game/v2/profile/{accountId}/{wildcard}/{mcp}",
-                            };
-                        }
-
-                        return response;
-                    }
+                    return CreateErrorResponse("No Body for request", accountId, wildcard, mcp);
                 }
+                
+                var season = await SeasonUserAgent(Request);
+                var profileCacheEntry = await GetProfileCacheEntry(accountId, wildcard);
+                if (profileCacheEntry == null)
+                {
+                    return CreateErrorResponse("Authentication failed", accountId, wildcard, mcp);
+                }
+                
+                var response = await HandleMcpRequest(mcp, accountId, profileId, season, rvn, profileCacheEntry, requestBody);
+                return response;
             }
             catch (BaseError ex)
             {
-                var jsonResult = JsonConvert.SerializeObject(BaseError.FromBaseError(ex));
-
-                StatusCode(500);
-                return new ContentResult()
-                {
-                    Content = jsonResult,
-                    ContentType = "application/json",
-                    StatusCode = 500
-                };
+                return StatusCode(500, JsonConvert.SerializeObject(BaseError.FromBaseError(ex)));
             }
             catch (Exception ex)
             {
                 Logger.Error($"McpController: {ex.Message}", "MCP");
+                return Ok(DefaultMcpResponse());
             }
+        }
 
-            return Ok(new Mcp
+        private async Task<ProfileCacheEntry?> GetProfileCacheEntry(string accountId, string wildcard)
+        {
+            if (wildcard == "dedicated_server")
             {
-                profileRevision = 1,
-                profileId = "athena",
-                profileChangesBaseRevision = 1,
-                //profileChanges = new object[0],
-                profileCommandRevision = 1,
+                return await GrabData.Profile(accountId);
+            }
+            
+            var tokenPayload = HttpContext.Items["Payload"] as TokenPayload;
+            if (string.IsNullOrEmpty(tokenPayload?.Sec)) return null;
+            
+            return HttpContext.Items["ProfileData"] as ProfileCacheEntry;
+        }
+
+        private async Task<Mcp> HandleMcpRequest(string operatiom, string accountId, string profileId, VersionClass season, int rvn, ProfileCacheEntry profileCacheEntry, string requestBody)
+        {
+            Logger.Log($"Operation '{operatiom}' called!", "MCP");
+            return operatiom switch
+            {
+                "QueryProfile" => await QueryProfile.Init(accountId, profileId, season, rvn, profileCacheEntry),
+                "ClientQuestLogin" => await ClientQuestLogin.Init(accountId, profileId, season, rvn, profileCacheEntry),
+                "SetCosmeticLockerSlot" => await SetCosmeticLockerSlot.Init(accountId, profileId, season, rvn, profileCacheEntry, JsonConvert.DeserializeObject<SetCosmeticLockerSlotRequest>(requestBody)!),
+                "EquipBattleRoyaleCustomization" => await EquipBattleRoyaleCustomization.Init(accountId, profileId, season, rvn, profileCacheEntry, JsonConvert.DeserializeObject<EquipBattleRoyaleCustomizationRequest>(requestBody)!),
+                "BulkEquipBattleRoyaleCustomization" => await BulkEquipBattleRoyaleCustomization.Init(accountId, profileId, season, rvn, profileCacheEntry, JsonConvert.DeserializeObject<BulkEquipBattleRoyaleCustomizationResponse>(requestBody)!),
+                "MarkNewQuestNotificationSent" => await MarkNewQuestNotificationSent.Init(accountId, profileId, season, rvn, profileCacheEntry, JsonConvert.DeserializeObject<MarkNewQuestNotificationSentRequest>(requestBody)!),
+                "MarkItemSeen" => await MarkItemSeen.Init(accountId, profileId, season, rvn, profileCacheEntry, JsonConvert.DeserializeObject<MarkNewQuestNotificationSentRequest>(requestBody)!),
+                "SetPartyAssistQuest" => await SetPartyAssistQuest.Init(accountId, profileId, season, rvn, profileCacheEntry, JsonConvert.DeserializeObject<SetPartyAssistQuestResponse>(requestBody)!),
+                "SetBattleRoyaleBanner" => await SetBattleRoyaleBanner.Init(accountId, profileId, season, rvn, profileCacheEntry, JsonConvert.DeserializeObject<SetBattleRoyaleBannerReq>(requestBody)!),
+                "PurchaseCatalogEntry" => await PurchaseCatalogEntry.Init(accountId, profileId, season, rvn, profileCacheEntry, JsonConvert.DeserializeObject<PurchaseCatalogEntryRequest>(requestBody)!),
+                "RemoveGiftBox" => await RemoveGiftBox.Init(accountId, profileId, season, rvn, profileCacheEntry, JsonConvert.DeserializeObject<RemoveGiftBoxReq>(requestBody)!),
+                "FortRerollDailyQuest" => await FortRerollDailyQuest.Init(accountId, profileId, season, rvn, profileCacheEntry, JsonConvert.DeserializeObject<FortRerollDailyQuestReq>(requestBody)!),
+                "UpdateQuestClientObjectives" => await UpdateQuestClientObjectives.Init(accountId, profileId, season, rvn, profileCacheEntry, JsonConvert.DeserializeObject<UpdateQuestClientObjectivesReq>(requestBody)!),               
+                _ => DefaultMcpResponse(profileId, profileCacheEntry)
+            };
+        }
+
+        private Mcp DefaultMcpResponse(string profileId = "athena", ProfileCacheEntry? profileCacheEntry = null)
+        {
+            var rvn = profileCacheEntry?.AccountData.athena.RVN ?? 1;
+            return new Mcp
+            {
+                profileRevision = rvn,
+                profileId = profileId,
+                profileChangesBaseRevision = rvn,
+                profileCommandRevision = profileCacheEntry?.AccountData.athena.CommandRevision ?? 1,
                 serverTime = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffZ"),
                 responseVersion = 1
-            });
+            };
+        }
+
+        private ActionResult CreateErrorResponse(string message, string accountId, string wildcard, string mcp)
+        {
+            var error = new BaseError
+            {
+                errorCode = "errors.com.epicgames.common.authentication.authentication_failed",
+                errorMessage = $"{message} for /api/game/v2/profile/{accountId}/{wildcard}/{mcp}",
+                messageVars = new List<string> { $"/api/game/v2/profile/{accountId}/{wildcard}/{mcp}" },
+                numericErrorCode = 1032,
+                originatingService = "any",
+                intent = "prod",
+                error_description = $"{message} for /api/game/v2/profile/{accountId}/{wildcard}/{mcp}"
+            };
+            return StatusCode(500, JsonConvert.SerializeObject(BaseError.FromBaseError(error)));
         }
     }
 }
